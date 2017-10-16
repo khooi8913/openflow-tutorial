@@ -30,18 +30,27 @@ class Router(object):
         # This binds our PacketIn event listener
         connection.addListeners(self)
 
+        # Buffer for packets waiting for ARP
+        self.buffer = {}
+
         # Use this table to keep track of which ethernet address is on
         # which switch port (keys are MACs, values are ports).
         self.mac_to_port = {}
 
         # ARP Table
         self.arp_table = {}
-        # self.arp_table[IPAddr('10.0.1.1')] = 'AA:BB:CC:DD:EE:01'
-        # self.arp_table[IPAddr('10.0.2.1')] = 'AA:BB:CC:DD:EE:02'
-        # self.arp_table[IPAddr('10.0.3.1')] = 'AA:BB:CC:DD:EE:03'
         self.arp_table['10.0.1.1'] = 'AA:BB:CC:DD:EE:01'
         self.arp_table['10.0.2.1'] = 'AA:BB:CC:DD:EE:02'
         self.arp_table['10.0.3.1'] = 'AA:BB:CC:DD:EE:03'
+        # Route default flows for ICMP traffic destined to Router Interfaces
+        for dest in self.arp_table.keys():
+            msg = of.ofp_flow_mod()
+            msg.priority = 100
+            msg.match.dl_type = ethernet.IP_TYPE
+            msg.match.nw_proto = ipv4.ICMP_PROTOCOL
+            msg.match.nw_dst = IPAddr(dest)
+            msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER))
+            self.connection.send(msg)
 
         self.routing_table = {}
         self.routing_table['10.0.1.0/24'] = {'Port': 1, 'RouterInterface':'10.0.1.1'}
@@ -100,9 +109,33 @@ class Router(object):
                 self.arp_table[srcip] = hwsrc
                 self.mac_to_port[hwsrc] = packet_in.in_port
                 log.debug("%s %s INSTALLED TO CAM TABLE" % (srcip, hwsrc))
+            # If there are packets in buffer waiting to be sent out
+            if srcip in self.buffer.keys():
+                print 'YES!'
+                out_port = self.routing_table[self.buffer[srcip]['DestinationNetwork']]['Port']
+                ip_packet = self.buffer[srcip]['IP_Packet']
+                etherFrame = ethernet()
+                etherFrame.type = etherFrame.IP_TYPE
+                etherFrame.src = EthAddr(self.arp_table[self.routing_table[self.buffer[srcip]['DestinationNetwork']]['RouterInterface']])
+                etherFrame.dst = EthAddr(self.arp_table[srcip])
+                etherFrame.payload = ip_packet
+                self.resend_packet(etherFrame, out_port)
+
+                msg = of.ofp_flow_mod()
+                print self.buffer[srcip]['DestinationNetwork']
+                msg.priority = 10
+                msg.match.dl_type = ethernet.IP_TYPE
+                msg.match.nw_proto = ipv4.ICMP_PROTOCOL
+                msg.match.set_nw_dst(self.buffer[srcip]['DestinationNetwork'])
+                # msg.match.nw_dst = IPAddr(srcip)
+                msg.actions.append(of.ofp_action_dl_addr.set_src(EthAddr(self.arp_table[self.routing_table[self.buffer[srcip]['DestinationNetwork']]['RouterInterface']])))
+                msg.actions.append(of.ofp_action_dl_addr.set_dst(EthAddr(self.arp_table[srcip])))
+                msg.actions.append(of.ofp_action_output(port=out_port))
+                self.connection.send(msg)
+                log.debug("Flow mod for destination network %s sent!", self.buffer[srcip]['DestinationNetwork'])
+                self.buffer.pop(srcip)
 
     def ICMP_Handler(self, packet, packet_in):
-
         ethernet_frame = packet
         ip_packet = packet.payload
 
@@ -182,6 +215,9 @@ class Router(object):
 
                     # ARP if host MAC Address is not present
                     if destination_ip not in self.arp_table:
+                        # Push frame to buffer
+                        self.buffer[destination_ip] = {'IP_Packet': ip_packet, 'DestinationNetwork': destination_network}
+
                         # Construct ARP Packet
                         arp_request = arp()
                         arp_request.opcode = arp.REQUEST
@@ -197,7 +233,6 @@ class Router(object):
                         ether.dst = EthAddr('FF:FF:FF:FF:FF:FF')
                         ether.payload = arp_request
                         self.resend_packet(ether, output_port)
-                        currentTime = time.clock()
                         # Wait for ARP Reply
                         # while destination_ip not in self.arp_table:
                         #     if time.clock()-currentTime > 1000:
