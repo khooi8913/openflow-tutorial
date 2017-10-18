@@ -4,7 +4,7 @@ Collection of my solutions for [Mininet's OpenFlow Tutorial](https://github.com/
 
 ## License
 
-Copyright [2017] [khooi8913]
+Copyright 2017 khooi8913
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
