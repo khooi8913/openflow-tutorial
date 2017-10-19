@@ -1,6 +1,10 @@
 # openflow-tutorial
 
-Collection of my solutions for [Mininet's OpenFlow Tutorial](https://github.com/mininet/openflow-tutorial/wiki)
++ Collection of my solutions for [Mininet's OpenFlow Tutorial](https://github.com/mininet/openflow-tutorial/wiki)
++ Creating a Firewall Tutorial - Skipped (Construct flow mod message only)
+
+Program logic satisfies all the required functionalities, works!
+Lots of refactoring/ improvements can be done... Moving on, RYU!
 
 ## License
 
