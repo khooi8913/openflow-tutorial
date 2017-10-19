@@ -1,10 +1,6 @@
 from pox.core import core
 from netaddr import *
-
-import pox
-log = core.getLogger()
-
-import pox.lib.packet as pkt
+from pox.lib.revent import *
 from pox.lib.packet.ethernet import ethernet
 from pox.lib.packet.ipv4 import ipv4
 from pox.lib.packet.arp import arp
@@ -13,15 +9,26 @@ from pox.lib.addresses import IPAddr, EthAddr
 from pox.lib.util import str_to_bool, dpid_to_str
 from pox.lib.recoco import Timer
 
+import pox.lib.packet as pkt
 import pox.openflow.libopenflow_01 as of
-
-from pox.lib.revent import *
 import time
+import pox
 
-# Mock database
+log = core.getLogger()
+
+# Router Configurations
 info_table = dict()
 info_table[1] = {'Local Networks':'10.0.1.0/24','Gateway':'10.0.1.1', 'MAC':'AA:BB:CC:DD:EE:01', 'Destination Address':'10.0.2.0/24', 'Next Hop':'10.0.2.1'}
 info_table[2] = {'Local Networks':'10.0.2.0/24','Gateway':'10.0.2.1', 'MAC':'AA:BB:CC:DD:EE:02', 'Destination Address':'10.0.1.0/24', 'Next Hop':'10.0.1.1'}
+
+#   For each Router object created, it will query for their respective configurations
+#   Each router :
+#       +   are uniquely identified via their DPID
+#       +   has their own CAM, Routing, ARP tables
+#   Each different network that exists in a Router will be represented as two different interfaces
+
+#   TODO - 1:   ICMP Destination Unreachable
+#   TODO - 2:   Send out buffered frames awaiting for ARP Replies
 
 class Router(object):
     def __init__(self, connection):
@@ -45,7 +52,6 @@ class Router(object):
         # Router Interfaces
         self.interfaces = dict()
         self.interfaces[info_table[self.dpid]['Gateway']] = {'MAC':info_table[self.dpid]['MAC'], 'Network':info_table[self.dpid]['Local Networks']}
-
         log.debug("%s %s" % (self.dpid, self.interfaces))
 
         # ARP Table
@@ -55,22 +61,6 @@ class Router(object):
         self.routing_table = dict()
         self.routing_table[info_table[self.dpid]['Destination Address']] = {'Next Hop' : info_table[self.dpid]['Next Hop'], 'Connected': info_table[self.dpid]['Gateway']}
         log.debug("%s %s" % (self.dpid, self.routing_table))
-
-        # Preconfigured Flows - ARP Router Interface
-        # for dest in self.interfaces.keys():
-        #     msg = of.ofp_flow_mod()
-        #     msg.priority = 100
-        #     msg.match.dl_type = ethernet.ARP_TYPE
-        #     msg.match.nw_dst = IPAddr(dest)
-        #     msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER))
-        #     self.connection.send(msg)
-        #
-        # # ARP - LAN
-        # msg = of.ofp_flow_mod()
-        # msg.priority = 90
-        # msg.match.dl_type = ethernet.ARP_TYPE
-        # msg.actions.append(of.ofp_action_output(port=of.OFPP_ALL))
-        # self.connection.send(msg)
 
     def resend_packet(self, packet_in, out_port):
         """
@@ -194,14 +184,14 @@ class Router(object):
             ether.payload = ip
 
             self.resend_packet(ether, packet_in.in_port)
-            log.debug("ICMP ECHO REPLY SENT!")
+            log.debug("%s ICMP ECHO REPLY SENT!" % self.dpid)
 
     def _handle_PacketIn(self, event):
         """
         Handles packet in messages from the switch.
         """
-        etherFrame = event.parsed  # This is the parsed packet data.
-        packet_in = event.ofp  # The actual ofp_packet_in message.
+        etherFrame = event.parsed   # This is the parsed packet data.
+        packet_in = event.ofp       # The actual ofp_packet_in message.
 
         # Incomplete frames
         if not etherFrame.parsed:
@@ -239,7 +229,7 @@ class Router(object):
 
                 # For Router?
                 if destination_ip in self.interfaces:
-                    log.debug('ICMP ECHO -> ROUTER INTERFACE')
+                    log.debug('%s ICMP ECHO -> ROUTER INTERFACE' % self.dpid)
                     self.ICMP_Handler(etherFrame, packet_in)
                 else:
                     routable = False
@@ -284,7 +274,7 @@ class Router(object):
                             etherFrame.dst = EthAddr(self.arp_table[destination_ip])
                             self.resend_packet(etherFrame, self.mac_to_port[self.arp_table[destination_ip]])
 
-                    if routable:
+                    elif routable:
                         next_hop = self.routing_table[destination_network]['Next Hop']
                         if next_hop not in self.arp_table:
                             # ARP for the Next Hop
@@ -310,6 +300,8 @@ class Router(object):
                             etherFrame.dst = EthAddr(self.arp_table[next_hop])
                             self.resend_packet(etherFrame, self.mac_to_port[self.arp_table[next_hop]])
                             log.debug('%s Packet forwarded to next hop!' % self.dpid)
+                    # else:
+                        #   TODO: ICMP Destination Unreachable
 
 
 def launch():

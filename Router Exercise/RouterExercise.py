@@ -1,12 +1,6 @@
 from pox.core import core
 from netaddr import *
-
-import pox
-
-
-log = core.getLogger()
-
-import pox.lib.packet as pkt
+from pox.lib.revent import *
 from pox.lib.packet.ethernet import ethernet
 from pox.lib.packet.ipv4 import ipv4
 from pox.lib.packet.arp import arp
@@ -15,11 +9,12 @@ from pox.lib.addresses import IPAddr, EthAddr
 from pox.lib.util import str_to_bool, dpid_to_str
 from pox.lib.recoco import Timer
 
+import pox.lib.packet as pkt
 import pox.openflow.libopenflow_01 as of
-
-from pox.lib.revent import *
-
 import time
+import pox
+
+log = core.getLogger()
 
 class Router(object):
     def __init__(self, connection):
@@ -42,6 +37,7 @@ class Router(object):
         self.arp_table['10.0.1.1'] = 'AA:BB:CC:DD:EE:01'
         self.arp_table['10.0.2.1'] = 'AA:BB:CC:DD:EE:02'
         self.arp_table['10.0.3.1'] = 'AA:BB:CC:DD:EE:03'
+
         # Route default flows for ICMP traffic destined to Router Interfaces
         for dest in self.arp_table.keys():
             msg = of.ofp_flow_mod()
@@ -109,6 +105,7 @@ class Router(object):
                 self.arp_table[srcip] = hwsrc
                 self.mac_to_port[hwsrc] = packet_in.in_port
                 log.debug("%s %s INSTALLED TO CAM TABLE" % (srcip, hwsrc))
+
             # If there are packets in buffer waiting to be sent out
             if srcip in self.buffer.keys():
                 print 'YES!'
@@ -168,6 +165,7 @@ class Router(object):
         Handles packet in messages from the switch.
         """
         etherFrame = event.parsed  # This is the parsed packet data.
+
         if not etherFrame.parsed:
             log.warning("Ignoring incomplete packet")
             return
@@ -233,10 +231,7 @@ class Router(object):
                         ether.dst = EthAddr('FF:FF:FF:FF:FF:FF')
                         ether.payload = arp_request
                         self.resend_packet(ether, output_port)
-                        # Wait for ARP Reply
-                        # while destination_ip not in self.arp_table:
-                        #     if time.clock()-currentTime > 1000:
-                        #         break
+
                     if destination_ip in self.arp_table:
                         etherFrame.src = EthAddr(self.arp_table[self.routing_table[destination_network]['RouterInterface']])
                         etherFrame.dst = EthAddr(self.arp_table[destination_ip])
@@ -253,7 +248,7 @@ class Router(object):
                 icmp_echo_reply_packet.payload = icmp_request_packet.payload
 
                 ip = ipv4()
-                ip.srcip = ip_packet.dstip  # Have to work on here
+                ip.srcip = ip_packet.dstip
                 ip.dstip = ip_packet.srcip
                 ip.protocol = ipv4.ICMP_PROTOCOL
                 ip.payload = icmp_echo_reply_packet
